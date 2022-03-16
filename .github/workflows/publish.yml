@@ -1,0 +1,82 @@
+name: Docker
+
+on:
+  push:
+    # Publish `master` as Docker `latest` image.
+    branches:
+      - master
+
+    # Publish `v1.2.3` tags as releases.
+    tags:
+      - v*
+
+  # Run tests for any PRs.
+  pull_request:
+
+env:
+  # TODO: Change variable to your image's name.
+  IMAGE_NAME: service-example
+
+jobs:
+  # Run tests.
+  # See also https://docs.docker.com/docker-hub/builds/automated-testing/
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Run tests
+        run: |
+          if [ -f docker-compose.test.yml ]; then
+            docker-compose --file docker-compose.test.yml build
+            docker-compose --file docker-compose.test.yml run sut
+          fi
+
+  # Push image to GitHub Packages.
+  # See also https://docs.docker.com/docker-hub/builds/
+  push:
+    # Ensure test job passes before pushing image.
+    needs: test
+
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Build image
+        run: |
+          SERVICE_NAME=service-example
+          BUILD_VERSION=$(cat version.txt)
+          COMMIT_HASH=$(git rev-parse HEAD)
+          BUILD_DATE=$(shell LANG=en_us_88591; date)
+          
+          echo IMAGE_NAME=$IMAGE_NAME
+          echo SERVICE_NAME=$SERVICE_NAME
+          echo BUILD_VERSION=$BUILD_VERSION
+          echo COMMIT_HASH=$COMMIT_HASH
+          echo BUILD_DATE=$BUILD_DATE
+          
+          docker build --build-arg buildVersion=$BUILD_VERSION --build-arg commitHash=$COMMIT_HASH --build-arg buildDate="$BUILD_DATE" -f Dockerfile --network=host --tag="$SERVICE_NAME:$BUILD_VERSION" .
+
+      - name: Log into registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login docker.pkg.github.com -u ${{ github.actor }} --password-stdin
+
+      - name: Push image
+        run: |
+          IMAGE_ID=docker.pkg.github.com/${{ github.repository }}/$IMAGE_NAME
+          
+          SERVICE_NAME=service-example
+          BUILD_VERSION=$(cat version.txt)
+
+          # Change all uppercase to lowercase
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+
+          echo IMAGE_ID=$IMAGE_ID
+          
+          echo Tagging "$SERVICE_NAME:$BUILD_VERSION" as "$IMAGE_ID:latest"
+          docker tag "$SERVICE_NAME:$BUILD_VERSION" "$IMAGE_ID:latest"
+          
+          echo Pushing "$IMAGE_ID:latest"
+          docker push "$IMAGE_ID:latest"
